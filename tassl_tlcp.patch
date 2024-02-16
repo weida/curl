@@ -1,0 +1,651 @@
+diff -urN curl-8.6.0/include/curl/curl.h curl-8.6.0.ok/include/curl/curl.h
+--- curl-8.6.0/include/curl/curl.h	2024-01-24 00:55:56.000000000 +0800
++++ curl-8.6.0.ok/include/curl/curl.h	2024-02-15 09:46:15.794025150 +0800
+@@ -2206,6 +2206,25 @@
+   /* millisecond version */
+   CURLOPT(CURLOPT_SERVER_RESPONSE_TIMEOUT_MS, CURLOPTTYPE_LONG, 324),
+ 
++  /* name of the file keeping your private SM encryption SSL-certificate */
++  CURLOPT(CURLOPT_SSLDCERT, CURLOPTTYPE_STRINGPOINT, 325),
++
++  /* password for the SSL or SSH SM encryption private key */
++  CURLOPT(CURLOPT_DKEYPASSWD, CURLOPTTYPE_STRINGPOINT, 326),
++
++  /* type of the file keeping your SM encryption SSL-certificate ("DER", "PEM", "ENG") */
++  CURLOPT(CURLOPT_SSLDCERTTYPE, CURLOPTTYPE_STRINGPOINT, 327),
++
++  /* name of the file keeping your SM encryption private SSL-key */
++  CURLOPT(CURLOPT_SSLDKEY, CURLOPTTYPE_STRINGPOINT, 328),
++
++  /* type of the file keeping your SM encryption private SSL-key ("DER", "PEM", "ENG") */
++  CURLOPT(CURLOPT_SSLDKEYTYPE, CURLOPTTYPE_STRINGPOINT, 329),
++
++  /* the SM encryption private SSL-certificate as a "blob" */
++  CURLOPT(CURLOPT_SSLDCERT_BLOB, CURLOPTTYPE_BLOB, 330),
++  CURLOPT(CURLOPT_SSLDKEY_BLOB, CURLOPTTYPE_BLOB, 331),
++
+   CURLOPT_LASTENTRY /* the last unused */
+ } CURLoption;
+ 
+@@ -2320,6 +2339,7 @@
+   CURL_SSLVERSION_TLSv1_1,
+   CURL_SSLVERSION_TLSv1_2,
+   CURL_SSLVERSION_TLSv1_3,
++  CURL_SSLVERSION_TLCPv1_1, /* SM TLCP 1.1*/
+ 
+   CURL_SSLVERSION_LAST /* never use, keep last */
+ };
+@@ -2331,6 +2351,7 @@
+   CURL_SSLVERSION_MAX_TLSv1_1 =  (CURL_SSLVERSION_TLSv1_1 << 16),
+   CURL_SSLVERSION_MAX_TLSv1_2 =  (CURL_SSLVERSION_TLSv1_2 << 16),
+   CURL_SSLVERSION_MAX_TLSv1_3 =  (CURL_SSLVERSION_TLSv1_3 << 16),
++  CURL_SSLVERSION_MAX_TLCPv1_1 = (CURL_SSLVERSION_TLCPv1_1 << 16),
+ 
+   /* never use, keep last */
+   CURL_SSLVERSION_MAX_LAST =     (CURL_SSLVERSION_LAST    << 16)
+diff -urN curl-8.6.0/include/curl/typecheck-gcc.h curl-8.6.0.ok/include/curl/typecheck-gcc.h
+--- curl-8.6.0/include/curl/typecheck-gcc.h	2023-12-08 21:25:58.000000000 +0800
++++ curl-8.6.0.ok/include/curl/typecheck-gcc.h	2024-02-15 09:46:15.794025150 +0800
+@@ -348,6 +348,11 @@
+    (option) == CURLOPT_USERPWD ||                                             \
+    (option) == CURLOPT_XOAUTH2_BEARER ||                                      \
+    (option) == CURLOPT_SSL_EC_CURVES ||                                       \
++   (option) == CURLOPT_DKEYPASSWD ||                                          \
++   (option) == CURLOPT_SSLDCERT ||                                            \
++   (option) == CURLOPT_SSLDCERTTYPE ||                                        \
++   (option) == CURLOPT_SSLDKEY ||                                             \
++   (option) == CURLOPT_SSLDKEYTYPE ||                                         \
+    0)
+ 
+ /* evaluates to true if option takes a curl_write_callback argument */
+diff -urN curl-8.6.0/lib/easyoptions.c curl-8.6.0.ok/lib/easyoptions.c
+--- curl-8.6.0/lib/easyoptions.c	2024-01-23 23:21:49.000000000 +0800
++++ curl-8.6.0.ok/lib/easyoptions.c	2024-02-15 09:46:15.852026744 +0800
+@@ -365,6 +365,13 @@
+   {"XFERINFODATA", CURLOPT_XFERINFODATA, CURLOT_CBPTR, 0},
+   {"XFERINFOFUNCTION", CURLOPT_XFERINFOFUNCTION, CURLOT_FUNCTION, 0},
+   {"XOAUTH2_BEARER", CURLOPT_XOAUTH2_BEARER, CURLOT_STRING, 0},
++  {"SSLDCERT", CURLOPT_SSLDCERT, CURLOT_STRING, 0},
++  {"SSLDCERTTYPE", CURLOPT_SSLDCERTTYPE, CURLOT_STRING, 0},
++  {"SSLDCERT_BLOB", CURLOPT_SSLDCERT_BLOB, CURLOT_BLOB, 0},
++  {"SSLDKEY", CURLOPT_SSLDKEY, CURLOT_STRING, 0},
++  {"SSLDKEYPASSWD", CURLOPT_DKEYPASSWD, CURLOT_STRING, CURLOT_FLAG_ALIAS},
++  {"SSLDKEYTYPE", CURLOPT_SSLDKEYTYPE, CURLOT_STRING, 0},
++  {"SSLDKEY_BLOB", CURLOPT_SSLDKEY_BLOB, CURLOT_BLOB, 0},
+   {NULL, CURLOPT_LASTENTRY, CURLOT_LONG, 0} /* end of table */
+ };
+ 
+@@ -375,6 +382,6 @@
+  */
+ int Curl_easyopts_check(void)
+ {
+-  return ((CURLOPT_LASTENTRY%10000) != (324 + 1));
++  return ((CURLOPT_LASTENTRY%10000) != (331 + 1));
+ }
+ #endif
+diff -urN curl-8.6.0/lib/setopt.c curl-8.6.0.ok/lib/setopt.c
+--- curl-8.6.0/lib/setopt.c	2024-01-23 23:21:49.000000000 +0800
++++ curl-8.6.0.ok/lib/setopt.c	2024-02-15 09:46:15.848026634 +0800
+@@ -1736,6 +1736,20 @@
+     result = Curl_setblobopt(&data->set.blobs[BLOB_CERT],
+                              va_arg(param, struct curl_blob *));
+     break;
++  case CURLOPT_SSLDCERT:
++    /*
++     * String that holds file name of the SM SSL encryption certificate to use
++     */
++    result = Curl_setstropt(&data->set.str[STRING_DCERT],
++                            va_arg(param, char *));
++    break;
++  case CURLOPT_SSLDCERT_BLOB:
++    /*
++     * Blob that holds file content of the SM SSL encryption certificate to use
++     */
++    result = Curl_setblobopt(&data->set.blobs[BLOB_DCERT],
++                             va_arg(param, struct curl_blob *));
++    break;
+ #ifndef CURL_DISABLE_PROXY
+   case CURLOPT_PROXY_SSLCERT:
+     /*
+@@ -1759,6 +1773,13 @@
+     result = Curl_setstropt(&data->set.str[STRING_CERT_TYPE],
+                             va_arg(param, char *));
+     break;
++  case CURLOPT_SSLDCERTTYPE:
++    /*
++     * String that holds file type of the SM SSL encryption certificate to use
++     */
++    result = Curl_setstropt(&data->set.str[STRING_DCERT_TYPE],
++                            va_arg(param, char *));
++    break;
+ #ifndef CURL_DISABLE_PROXY
+   case CURLOPT_PROXY_SSLCERTTYPE:
+     /*
+@@ -1782,6 +1803,20 @@
+     result = Curl_setblobopt(&data->set.blobs[BLOB_KEY],
+                              va_arg(param, struct curl_blob *));
+     break;
++  case CURLOPT_SSLDKEY:
++    /*
++     * String that holds file name of the SSL SM encryption key to use
++     */
++    result = Curl_setstropt(&data->set.str[STRING_DKEY],
++                            va_arg(param, char *));
++    break;
++  case CURLOPT_SSLDKEY_BLOB:
++    /*
++     * Blob that holds file content of the SSL SM encrpytion key to use
++     */
++    result = Curl_setblobopt(&data->set.blobs[BLOB_DKEY],
++                             va_arg(param, struct curl_blob *));
++    break;
+ #ifndef CURL_DISABLE_PROXY
+   case CURLOPT_PROXY_SSLKEY:
+     /*
+@@ -1805,6 +1840,14 @@
+     result = Curl_setstropt(&data->set.str[STRING_KEY_TYPE],
+                             va_arg(param, char *));
+     break;
++  case CURLOPT_SSLDKEYTYPE:
++    /*
++     * String that holds file type of the SM SSL encryption key to use
++     */
++    result = Curl_setstropt(&data->set.str[STRING_DKEY_TYPE],
++                            va_arg(param, char *));
++    break;
++
+ #ifndef CURL_DISABLE_PROXY
+   case CURLOPT_PROXY_SSLKEYTYPE:
+     /*
+@@ -1821,6 +1864,14 @@
+     result = Curl_setstropt(&data->set.str[STRING_KEY_PASSWD],
+                             va_arg(param, char *));
+     break;
++  case CURLOPT_DKEYPASSWD:
++    /*
++     * String that holds the SSL or SSH SM encryption private key password.
++     */
++    result = Curl_setstropt(&data->set.str[STRING_DKEY_PASSWD],
++                            va_arg(param, char *));
++    break;
++
+ #ifndef CURL_DISABLE_PROXY
+   case CURLOPT_PROXY_KEYPASSWD:
+     /*
+diff -urN curl-8.6.0/lib/urldata.h curl-8.6.0.ok/lib/urldata.h
+--- curl-8.6.0/lib/urldata.h	2024-01-24 00:55:56.000000000 +0800
++++ curl-8.6.0.ok/lib/urldata.h	2024-02-15 09:46:15.860026964 +0800
+@@ -282,9 +282,11 @@
+   char *cipher_list13;   /* list of TLS 1.3 cipher suites to use */
+   char *pinned_key;
+   char *CRLfile;         /* CRL to check certificate revocation */
++  char *dclientcert;
+   struct curl_blob *cert_blob;
+   struct curl_blob *ca_info_blob;
+   struct curl_blob *issuercert_blob;
++  struct curl_blob *dcert_blob; 
+ #ifdef USE_TLS_SRP
+   char *username; /* TLS username (for, e.g., SRP) */
+   char *password; /* TLS password (for, e.g., SRP) */
+@@ -309,6 +311,12 @@
+   struct curl_blob *key_blob;
+   char *key_type; /* format for private key (default: PEM) */
+   char *key_passwd; /* plain text private key password */
++  char *dcert_type; /* format for SM encryption certificate (default: PEM)*/
++  char *dkey; /* SM encryption private key file name */
++  struct curl_blob *dkey_blob;
++  char *dkey_type; /* format for SM encryption private key (default: PEM) */
++  char *dkey_passwd; /* plain text SM encryption private key password */
++
+   BIT(certinfo);     /* gather lots of certificate info */
+   BIT(falsestart);
+   BIT(enable_beast); /* allow this flaw for interoperability's sake */
+@@ -1618,6 +1626,12 @@
+   STRING_SSL_EC_CURVES,
+   STRING_AWS_SIGV4, /* Parameters for V4 signature */
+   STRING_HAPROXY_CLIENT_IP,     /* CURLOPT_HAPROXY_CLIENT_IP */
++  STRING_COPYPOSTFIELDS,  /* if POST, set the fields' values here */
++  STRING_DCERT,           /* SM client encrytion certificate file name */
++  STRING_DCERT_TYPE,      /* format for SM encryption certificate (default: PEM)*/
++  STRING_DKEY,            /* SM encrytion private key file name */
++  STRING_DKEY_PASSWD,     /* SM encrytion plain text private key password */
++  STRING_DKEY_TYPE,       /* SM format for encrytion private key (default: PEM) */
+ 
+   /* -- end of null-terminated strings -- */
+ 
+@@ -1625,7 +1639,6 @@
+ 
+   /* -- below this are pointers to binary data that cannot be strdup'ed. --- */
+ 
+-  STRING_COPYPOSTFIELDS,  /* if POST, set the fields' values here */
+ 
+   STRING_LAST /* not used, just an end-of-list marker */
+ };
+@@ -1639,6 +1652,8 @@
+   BLOB_SSL_ISSUERCERT_PROXY,
+   BLOB_CAINFO,
+   BLOB_CAINFO_PROXY,
++  BLOB_DCERT,
++  BLOB_DKEY,
+   BLOB_LAST
+ };
+ 
+diff -urN curl-8.6.0/lib/vtls/openssl.c curl-8.6.0.ok/lib/vtls/openssl.c
+--- curl-8.6.0/lib/vtls/openssl.c	2024-01-25 06:53:45.000000000 +0800
++++ curl-8.6.0.ok/lib/vtls/openssl.c	2024-02-15 10:10:14.055565066 +0800
+@@ -2525,7 +2525,8 @@
+   }
+   else
+ #endif
+-  if(ssl_ver == SSL3_VERSION_MAJOR) {
++  if(ssl_ver == SSL3_VERSION_MAJOR || 
++     ssl_ver == SM1_1_VERSION_MAJOR) {
+     switch(msg) {
+     case SSL3_MT_HELLO_REQUEST:
+       return "Hello request";
+@@ -2651,6 +2652,11 @@
+     verstr = "TLSv1.3";
+     break;
+ #endif
++#ifdef SM1_1_VERSION                   
++  case SM1_1_VERSION:
++    verstr = "TLCP";
++    break;
++#endif
+   case 0:
+     break;
+   default:
+@@ -2683,9 +2689,10 @@
+      * always pass-up content-type as 0. But the interesting message-type
+      * is at 'buf[0]'.
+      */
+-    if(ssl_ver == SSL3_VERSION_MAJOR && content_type)
++    if((ssl_ver == SSL3_VERSION_MAJOR && content_type)||
++       ssl_ver == SM1_1_VERSION_MAJOR) 
+       tls_rt_name = tls_rt_type(content_type);
+-    else
++    else  
+       tls_rt_name = "";
+ 
+     if(content_type == SSL3_RT_CHANGE_CIPHER_SPEC) {
+@@ -3469,6 +3476,9 @@
+   char * const ssl_cert = ssl_config->primary.clientcert;
+   const struct curl_blob *ssl_cert_blob = ssl_config->primary.cert_blob;
+   const char * const ssl_cert_type = ssl_config->cert_type;
++  char * const ssl_dcert = ssl_config->primary.dclientcert;
++  const struct curl_blob *ssl_dcert_blob = ssl_config->primary.dcert_blob;
++  const char * const ssl_dcert_type = ssl_config->dcert_type;
+   const bool verifypeer = conn_config->verifypeer;
+   char error_buffer[256];
+   struct ossl_ssl_backend_data *backend =
+@@ -3506,6 +3516,9 @@
+   case CURL_SSLVERSION_SSLv3:
+     failf(data, "No SSLv3 support");
+     return CURLE_NOT_BUILT_IN;
++  case CURL_SSLVERSION_TLCPv1_1:
++    req_method = CNTLS_client_method();
++    break;
+   default:
+     failf(data, "Unrecognized parameter passed via CURLOPT_SSLVERSION");
+     return CURLE_SSL_CONNECT_ERROR;
+@@ -3607,6 +3620,7 @@
+   case CURL_SSLVERSION_TLSv1_1: /* TLS >= version 1.1 */
+   case CURL_SSLVERSION_TLSv1_2: /* TLS >= version 1.2 */
+   case CURL_SSLVERSION_TLSv1_3: /* TLS >= version 1.3 */
++  case CURL_SSLVERSION_TLCPv1_1: /* TLCP >= version 1.1 */
+     /* asking for any TLS version as the minimum, means no SSL versions
+        allowed */
+     ctx_options |= SSL_OP_NO_SSLv2;
+@@ -3652,6 +3666,18 @@
+       result = CURLE_SSL_CERTPROBLEM;
+     if(result)
+       /* failf() is already done in cert_stuff() */
++      return result;
++  }
++
++  if(ssl_dcert || ssl_dcert_blob || ssl_dcert_type) {
++    if(!result &&
++       !cert_stuff(data, backend->ctx,
++                   ssl_dcert, ssl_dcert_blob, ssl_dcert_type,
++                   ssl_config->dkey, ssl_config->dkey_blob,
++                   ssl_config->dkey_type, ssl_config->dkey_passwd))
++      result = CURLE_SSL_CERTPROBLEM;
++    if(result)
++      /* failf() is already done in cert_stuff() */
+       return result;
+   }
+ 
+diff -urN curl-8.6.0/lib/vtls/vtls.c curl-8.6.0.ok/lib/vtls/vtls.c
+--- curl-8.6.0/lib/vtls/vtls.c	2024-01-27 01:11:07.000000000 +0800
++++ curl-8.6.0.ok/lib/vtls/vtls.c	2024-02-15 09:46:15.850026689 +0800
+@@ -298,6 +298,15 @@
+   data->set.ssl.primary.clientcert = data->set.str[STRING_CERT];
+   data->set.ssl.key_blob = data->set.blobs[BLOB_KEY];
+ 
++  data->set.ssl.primary.dcert_blob = data->set.blobs[BLOB_DCERT];
++  data->set.ssl.dkey_blob = data->set.blobs[BLOB_DKEY];
++  data->set.ssl.primary.dcert_blob = data->set.blobs[BLOB_CERT];
++  data->set.ssl.dcert_type = data->set.str[STRING_DCERT_TYPE];
++  data->set.ssl.dkey = data->set.str[STRING_DKEY];
++  data->set.ssl.dkey_type = data->set.str[STRING_DKEY_TYPE];
++  data->set.ssl.dkey_passwd = data->set.str[STRING_DKEY_PASSWD];
++  data->set.ssl.primary.dclientcert = data->set.str[STRING_DCERT];
++
+ #ifndef CURL_DISABLE_PROXY
+   data->set.proxy_ssl.primary.CApath = data->set.str[STRING_SSL_CAPATH_PROXY];
+   data->set.proxy_ssl.primary.CAfile = data->set.str[STRING_SSL_CAFILE_PROXY];
+diff -urN curl-8.6.0/packages/OS400/ccsidcurl.c curl-8.6.0.ok/packages/OS400/ccsidcurl.c
+--- curl-8.6.0/packages/OS400/ccsidcurl.c	2024-01-23 23:21:49.000000000 +0800
++++ curl-8.6.0.ok/packages/OS400/ccsidcurl.c	2024-02-15 09:46:15.842026469 +0800
+@@ -1169,6 +1169,11 @@
+   case CURLOPT_USERNAME:
+   case CURLOPT_USERPWD:
+   case CURLOPT_XOAUTH2_BEARER:
++  case CURLOPT_DKEYPASSWD:
++  case CURLOPT_SSLDCERT:
++  case CURLOPT_SSLDCERTTYPE:
++  case CURLOPT_SSLDKEY:
++  case CURLOPT_SSLDKEYTYPE:
+   /* END TRANSLATABLE STRING OPTIONS */
+     s = va_arg(arg, char *);
+     ccsid = va_arg(arg, unsigned int);
+diff -urN curl-8.6.0/packages/OS400/curl.inc.in curl-8.6.0.ok/packages/OS400/curl.inc.in
+--- curl-8.6.0/packages/OS400/curl.inc.in	2024-01-29 23:52:23.000000000 +0800
++++ curl-8.6.0.ok/packages/OS400/curl.inc.in	2024-02-15 09:46:15.842026469 +0800
+@@ -1661,6 +1661,40 @@
+      d                 c                   10323
+      d  CURLOPT_SERVER_RESPONSE_TIMEOUT_MS...
+      d                 c                   00324
++     d  CURLOPT_SSLDCERT...
++     d                 c                   00325
++     d  CURLOPT_DKEYPASSWD...
++     d                 c                   00326
++     d  CURLOPT_SSLDCERTTYPE...
++     d                 c                   00327
++     d  CURLOPT_SSLDKEY...
++     d                 c                   00328
++     d  CURLOPT_SSLDKEYTYPE...
++     d                 c                   00329
++     d  CURLOPT_SSLDCERT_BLOB...
++     d                 c                   40330
++     d  CURLOPT_SSLDKEY_BLOB...
++     d                 c                   40331
++      *
++      /if not defined(CURL_NO_OLDIES)
++     d  CURLOPT_FILE   c                   10001
++     d  CURLOPT_INFILE...
++     d                 c                   10009
++     d  CURLOPT_SSLKEYPASSWD...
++     d                 c                   10026
++     d  CURLOPT_SSLCERTPASSWD...
++     d                 c                   10026
++     d  CURLOPT_WRITEHEADER...
++     d                 c                   10029
++     d  CURLOPT_WRITEINFO...
++     d                 c                   10040
++     d  CURLOPT_FTPLISTONLY...
++     d                 c                   00048
++     d  CURLOPT_FTPAPPEND...
++     d                 c                   00050
++     d  CURLOPT_CLOSEPOLICY...
++     d                 c                   00072
++     d  CURLOPT_KRB4LEVEL...
+       *
+       /if not defined(CURL_NO_OLDIES)
+      d  CURLOPT_FILE   c                   10001
+diff -urN curl-8.6.0/src/tool_cfgable.c curl-8.6.0.ok/src/tool_cfgable.c
+--- curl-8.6.0/src/tool_cfgable.c	2024-01-23 23:21:49.000000000 +0800
++++ curl-8.6.0.ok/src/tool_cfgable.c	2024-02-15 09:46:15.796025204 +0800
+@@ -176,6 +176,14 @@
+   Curl_safefree(config->aws_sigv4);
+   Curl_safefree(config->proto_str);
+   Curl_safefree(config->proto_redir_str);
++
++  Curl_safefree(config->dcert);
++  Curl_safefree(config->dcert_type);
++  Curl_safefree(config->dkey);
++  Curl_safefree(config->dkey_type);
++  Curl_safefree(config->dkey_passwd);
++
++
+ }
+ 
+ void config_free(struct OperationConfig *config)
+diff -urN curl-8.6.0/src/tool_cfgable.h curl-8.6.0.ok/src/tool_cfgable.h
+--- curl-8.6.0/src/tool_cfgable.h	2024-01-23 23:21:49.000000000 +0800
++++ curl-8.6.0.ok/src/tool_cfgable.h	2024-02-15 09:46:15.797025232 +0800
+@@ -298,6 +298,11 @@
+   struct State state;             /* for create_transfer() */
+   bool rm_partial;                /* on error, remove partially written output
+                                      files */
++  char *dcert;             
++  char *dcert_type;    
++  char *dkey;  
++  char *dkey_type; 
++  char *dkey_passwd;
+ };
+ 
+ struct GlobalConfig {
+diff -urN curl-8.6.0/src/tool_getparam.c curl-8.6.0.ok/src/tool_getparam.c
+--- curl-8.6.0/src/tool_getparam.c	2024-01-24 00:50:41.000000000 +0800
++++ curl-8.6.0.ok/src/tool_getparam.c	2024-02-15 09:46:15.804025424 +0800
+@@ -87,8 +87,10 @@
+   C_CACERT,
+   C_CAPATH,
+   C_CERT,
++  C_CERT2,
+   C_CERT_STATUS,
+   C_CERT_TYPE,
++  C_CERT2_TYPE,
+   C_CIPHERS,
+   C_CLOBBER,
+   C_COMPRESSED,
+@@ -180,7 +182,9 @@
+   C_KEEPALIVE,
+   C_KEEPALIVE_TIME,
+   C_KEY,
++  C_KEY2,
+   C_KEY_TYPE,
++  C_KEY2_TYPE,
+   C_KRB,
+   C_KRB4,
+   C_LIBCURL,
+@@ -215,6 +219,7 @@
+   C_PARALLEL_IMMEDIATE,
+   C_PARALLEL_MAX,
+   C_PASS,
++  C_PASS2,
+   C_PATH_AS_IS,
+   C_PINNEDPUBKEY,
+   C_POST301,
+@@ -311,6 +316,7 @@
+   C_TFTP_BLKSIZE,
+   C_TFTP_NO_OPTIONS,
+   C_TIME_COND,
++  C_TLCP,
+   C_TLS_MAX,
+   C_TLS13_CIPHERS,
+   C_TLSAUTHTYPE,
+@@ -370,6 +376,8 @@
+   {"cert",                       ARG_FILE, 'E', C_CERT},
+   {"cert-status",                ARG_BOOL, ' ', C_CERT_STATUS},
+   {"cert-type",                  ARG_STRG, ' ', C_CERT_TYPE},
++  {"cert2",                      ARG_FILE, ' ', C_CERT2},
++  {"cert2-type",                 ARG_STRG, ' ', C_CERT2_TYPE},
+   {"ciphers",                    ARG_STRG, ' ', C_CIPHERS},
+   {"clobber",                    ARG_BOOL, ' ', C_CLOBBER},
+   {"compressed",                 ARG_BOOL, ' ', C_COMPRESSED},
+@@ -462,6 +470,8 @@
+   {"keepalive-time",             ARG_STRG, ' ', C_KEEPALIVE_TIME},
+   {"key",                        ARG_FILE, ' ', C_KEY},
+   {"key-type",                   ARG_STRG, ' ', C_KEY_TYPE},
++  {"key2",                       ARG_FILE, ' ', C_KEY2},
++  {"key2-type",                  ARG_STRG, ' ', C_KEY2_TYPE},
+   {"krb",                        ARG_STRG, ' ', C_KRB},
+   {"krb4",                       ARG_STRG, ' ', C_KRB4},
+   {"libcurl",                    ARG_STRG, ' ', C_LIBCURL},
+@@ -496,6 +506,7 @@
+   {"parallel-immediate",         ARG_BOOL, ' ', C_PARALLEL_IMMEDIATE},
+   {"parallel-max",               ARG_STRG, ' ', C_PARALLEL_MAX},
+   {"pass",                       ARG_STRG, ' ', C_PASS},
++  {"pass2",                      ARG_STRG, ' ', C_PASS2},
+   {"path-as-is",                 ARG_BOOL, ' ', C_PATH_AS_IS},
+   {"pinnedpubkey",               ARG_STRG, ' ', C_PINNEDPUBKEY},
+   {"post301",                    ARG_BOOL, ' ', C_POST301},
+@@ -592,6 +603,7 @@
+   {"tftp-blksize",               ARG_STRG, ' ', C_TFTP_BLKSIZE},
+   {"tftp-no-options",            ARG_BOOL, ' ', C_TFTP_NO_OPTIONS},
+   {"time-cond",                  ARG_STRG, 'z', C_TIME_COND},
++  {"tlcp",                       ARG_NONE, ' ', C_TLCP},
+   {"tls-max",                    ARG_STRG, ' ', C_TLS_MAX},
+   {"tls13-ciphers",              ARG_STRG, ' ', C_TLS13_CIPHERS},
+   {"tlsauthtype",                ARG_STRG, ' ', C_TLSAUTHTYPE},
+@@ -1962,6 +1974,9 @@
+     case C_SSLV3: /* --sslv3 */
+       warnf(global, "Ignores instruction to use SSLv3");
+       break;
++    case C_TLCP: /* --tlcp */
++      config->ssl_version = CURL_SSLVERSION_TLCPv1_1;
++      break;
+     case C_IPV4: /* --ipv4 */
+       config->ip_version = CURL_IPRESOLVE_V4;
+       break;
+@@ -2048,6 +2063,10 @@
+       cleanarg(clearthis);
+       GetFileAndPassword(nextarg, &config->cert, &config->key_passwd);
+       break;
++    case C_CERT2: /* --cert2 */
++      cleanarg(clearthis);
++      GetFileAndPassword(nextarg, &config->dcert, &config->dkey_passwd);
++      break;
+     case C_CACERT: /* --cacert */
+       err = getstr(&config->cacert, nextarg, DENY_BLANK);
+       break;
+@@ -2070,6 +2089,19 @@
+       err = getstr(&config->key_passwd, nextarg, DENY_BLANK);
+       cleanarg(clearthis);
+       break;
++    case C_CERT2_TYPE: /* --cert2-type */
++      err = getstr(&config->dcert_type, nextarg, DENY_BLANK);
++      break;
++    case C_KEY2: /* --key2 */
++      err = getstr(&config->dkey, nextarg, DENY_BLANK);
++      break;
++    case C_KEY2_TYPE: /* --key2-type */
++      err = getstr(&config->dkey_type, nextarg, DENY_BLANK);
++      break;
++    case C_PASS2: /* --pass2 */
++      err = getstr(&config->dkey_passwd, nextarg, DENY_BLANK);
++      cleanarg(clearthis);
++      break;
+     case C_ENGINE: /* --engine */
+       err = getstr(&config->engine, nextarg, DENY_BLANK);
+       if(!err &&
+diff -urN curl-8.6.0/src/tool_listhelp.c curl-8.6.0.ok/src/tool_listhelp.c
+--- curl-8.6.0/src/tool_listhelp.c	2024-01-25 20:54:33.000000000 +0800
++++ curl-8.6.0.ok/src/tool_listhelp.c	2024-02-16 11:39:26.967218347 +0800
+@@ -69,6 +69,12 @@
+   {"    --cert-type <type>",
+    "Certificate type (DER/PEM/ENG/P12)",
+    CURLHELP_TLS},
++  {"    --cert2 <certificate[:password]>",
++   "SM encryption Client certificate file and password",
++   CURLHELP_TLS},
++  {"    --cert2-type <type>",
++   "SM encryption Certificate type (DER/PEM/ENG/P12)",
++   CURLHELP_TLS},
+   {"    --ciphers <list of ciphers>",
+    "SSL ciphers to use",
+    CURLHELP_TLS},
+@@ -327,6 +333,12 @@
+   {"    --key-type <type>",
+    "Private key file type (DER/PEM/ENG)",
+    CURLHELP_TLS},
++  {"    --key2 <key>",
++   "SM encryption Private key file name",
++   CURLHELP_TLS | CURLHELP_SSH},
++  {"    --key2-type <type>",
++   "SM encryption Private key file type (DER/PEM/ENG)",
++   CURLHELP_TLS},
+   {"    --krb <level>",
+    "Enable Kerberos with security <level>",
+    CURLHELP_FTP},
+@@ -444,6 +456,9 @@
+   {"    --pass <phrase>",
+    "Pass phrase for the private key",
+    CURLHELP_SSH | CURLHELP_TLS | CURLHELP_AUTH},
++  {"    --pass2 <phrase>",
++   "Pass phrase for the SM encryption private key",
++   CURLHELP_SSH | CURLHELP_TLS | CURLHELP_AUTH},
+   {"    --path-as-is",
+    "Do not squash .. sequences in URL path",
+    CURLHELP_CURL},
+@@ -753,6 +768,9 @@
+   {"    --tlsv1.3",
+    "Use TLSv1.3 or greater",
+    CURLHELP_TLS},
++  {"    --tlcp",
++   "Use TLCP ",
++   CURLHELP_TLS},
+   {"    --tr-encoding",
+    "Request compressed transfer encoding",
+    CURLHELP_HTTP},
+diff -urN curl-8.6.0/src/tool_operate.c curl-8.6.0.ok/src/tool_operate.c
+--- curl-8.6.0/src/tool_operate.c	2024-01-23 23:21:49.000000000 +0800
++++ curl-8.6.0.ok/src/tool_operate.c	2024-02-15 09:46:15.795025177 +0800
+@@ -1527,6 +1527,7 @@
+ 
+         my_setopt_str(curl, CURLOPT_KEYPASSWD, config->key_passwd);
+         my_setopt_str(curl, CURLOPT_PROXY_KEYPASSWD, config->proxy_key_passwd);
++        my_setopt_str(curl, CURLOPT_DKEYPASSWD, config->dkey_passwd);
+ 
+         if(use_proto == proto_scp || use_proto == proto_sftp) {
+           /* SSH and SSL private key uses same command-line option */
+@@ -1609,6 +1610,13 @@
+               }
+             }
+           }
++          if(config->dcert) {
++            if(!config->dcert_type) {
++              if(is_pkcs11_uri(config->dcert)) {
++                config->dcert_type = strdup("ENG");
++              }
++            }
++          }
+ 
+           /* Check if config->key is a PKCS#11 URI and set the
+            * config->key_type if necessary */
+@@ -1619,6 +1627,13 @@
+               }
+             }
+           }
++          if(config->dkey) {
++            if(!config->dkey_type) {
++              if(is_pkcs11_uri(config->dkey)) {
++                config->dkey_type = strdup("ENG");
++              }
++            }
++          }
+ 
+           /* Check if config->proxy_cert is a PKCS#11 URI and set the
+            * config->proxy_type if necessary */
+@@ -1686,6 +1701,9 @@
+           my_setopt_str(curl, CURLOPT_SSLCERTTYPE, config->cert_type);
+           my_setopt_str(curl, CURLOPT_PROXY_SSLCERTTYPE,
+                         config->proxy_cert_type);
++          my_setopt_str(curl, CURLOPT_SSLDCERT, config->dcert);
++          my_setopt_str(curl, CURLOPT_SSLDCERTTYPE, config->dcert_type);
++
+ 
+ 
+ #if defined(CURLDEBUG) || defined(DEBUGBUILD)
+@@ -1729,6 +1747,9 @@
+           my_setopt_str(curl, CURLOPT_SSLKEYTYPE, config->key_type);
+           my_setopt_str(curl, CURLOPT_PROXY_SSLKEYTYPE,
+                         config->proxy_key_type);
++          my_setopt_str(curl, CURLOPT_SSLDKEY, config->dkey);
++          my_setopt_str(curl, CURLOPT_SSLDKEYTYPE, config->dkey_type);
++
+           if(config->insecure_ok) {
+             my_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+             my_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
